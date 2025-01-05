@@ -114,7 +114,9 @@ impl<P: Pairing> PublicParametersBuilder<P> {
         let pow_of_tau_g1 = max(size_left_values, size_right_values);
 
         let tau = self.tau.unwrap_or(P::ScalarField::rand(rng));
+        let curr_time = std::time::Instant::now();
         let (g1_affine_srs, g2_affine_srs) = unsafe_setup_from_tau::<P, R>(pow_of_tau_g1, tau);
+        println!("kzg param setup time: {:?} ms", curr_time.elapsed().as_millis());
 
         let domain_l = create_domain::<P>(self.domain_generator_l, size_left_values)?;
         let domain_r = create_domain::<P>(self.domain_generator_r, size_right_values)?;

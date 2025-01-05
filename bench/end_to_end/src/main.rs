@@ -1,3 +1,4 @@
+use std::cmp::min;
 use ark_bn254::{Bn254, Fr};
 use ark_isep::prover::prove;
 use ark_isep::public_parameters::PublicParameters;
@@ -7,16 +8,20 @@ use ark_isep::witness::Witness;
 use ark_std::{test_rng, UniformRand};
 use std::collections::BTreeMap;
 
-fn generate_inputs(num_tx: usize, pow_seg: usize, pow_shared: usize) -> (
-    PublicParameters<Bn254>,
-    Witness<Bn254>,
-    Statement<Bn254>,
-) {
+const COMMON_WITNESS_PER_TX: usize = 2;
+
+fn generate_inputs(
+    num_tx: usize,
+    pow_seg: usize,
+    pow_shared: usize,
+) -> (PublicParameters<Bn254>, Witness<Bn254>, Statement<Bn254>) {
     let rng = &mut test_rng();
+    let size_right_tx = 1 << pow_shared;
     let mut mappings = BTreeMap::new();
     for i in 0..num_tx {
-        mappings.insert(i << pow_seg, i << pow_shared);
-        mappings.insert((i << pow_seg) + 1, (i << pow_shared) + 1);
+        for j in 0..min(COMMON_WITNESS_PER_TX, size_right_tx) {
+            mappings.insert((i << pow_seg) + j, (i << pow_shared) + j);
+        }
     }
     let num_left_values = (1 << pow_seg) * num_tx;
     let num_right_values = (1 << pow_shared) * num_tx;
@@ -25,11 +30,16 @@ fn generate_inputs(num_tx: usize, pow_seg: usize, pow_shared: usize) -> (
         .size_left_values(num_left_values)
         .size_right_values(num_right_values)
         .position_mappings(&mappings)
-        .build(rng).unwrap();
+        .build(rng)
+        .unwrap();
     println!("setup time: {:?} ms", curr_time.elapsed().as_millis());
 
-    let left_witness_values = (0..num_left_values).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
-    let mut right_witness_values = (0..num_right_values).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+    let left_witness_values = (0..num_left_values)
+        .map(|_| Fr::rand(rng))
+        .collect::<Vec<_>>();
+    let mut right_witness_values = (0..num_right_values)
+        .map(|_| Fr::rand(rng))
+        .collect::<Vec<_>>();
     mappings.iter().for_each(|(k, v)| {
         right_witness_values[*v] = left_witness_values[*k];
     });
@@ -47,7 +57,11 @@ const POW_SEG: usize = 6;
 
 fn main() {
     for &pow_shared in SHARED_POW_VEC.iter() {
-        println!("Num TX: {}, Pow Seg: {}, Pow Shared: {}", NUM_TX, POW_SEG, pow_shared);
+        println!("Common Witness Per TX: {}", COMMON_WITNESS_PER_TX);
+        println!(
+            "Num TX: {}, Pow Seg: {}, Pow Shared: {}",
+            NUM_TX, POW_SEG, pow_shared
+        );
         let (pp, witness, statement) = generate_inputs(NUM_TX, POW_SEG, pow_shared);
         for _ in 0..NUM_ITER {
             let curr_time = std::time::Instant::now();
