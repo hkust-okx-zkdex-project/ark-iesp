@@ -6,28 +6,34 @@ use ark_isep::verifier::verify;
 use ark_isep::witness::Witness;
 use ark_std::{test_rng, UniformRand};
 use std::collections::BTreeMap;
+use std::ops::Range;
 
-fn generate_inputs(num_tx: usize, pow_seg: usize, pow_shared: usize) -> (
-    PublicParameters<Bn254>,
-    Witness<Bn254>,
-    Statement<Bn254>,
-) {
+fn generate_inputs(
+    num_tx: usize,
+    pow_seg: usize,
+    pow_shared: usize,
+) -> (PublicParameters<Bn254>, Witness<Bn254>, Statement<Bn254>) {
     let rng = &mut test_rng();
-    let mappings = (0..num_tx).map(|i| (i << pow_seg, i << pow_shared)).collect::<BTreeMap<_, _>>();
+    let mappings = (0..num_tx)
+        .map(|i| (i << pow_seg, i << pow_shared))
+        .collect::<BTreeMap<_, _>>();
     let num_left_values = (1 << pow_seg) * num_tx;
     let num_right_values = (1 << pow_shared) * num_tx;
     let curr_time = std::time::Instant::now();
     let pp = PublicParameters::<Bn254>::builder()
         .size_left_values(num_left_values)
         .size_right_values(num_right_values)
-        .positions_left(&(0..num_tx).map(|i| i << pow_seg).collect::<Vec<_>>())
-        .positions_right(&(0..num_tx).map(|i| i << pow_shared).collect::<Vec<_>>())
         .position_mappings(&mappings)
-        .build(rng).unwrap();
+        .build(rng)
+        .unwrap();
     println!("setup time: {:?} ms", curr_time.elapsed().as_millis());
 
-    let left_witness_values = (0..num_left_values).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
-    let mut right_witness_values = (0..num_right_values).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+    let left_witness_values = (0..num_left_values)
+        .map(|_| Fr::rand(rng))
+        .collect::<Vec<_>>();
+    let mut right_witness_values = (0..num_right_values)
+        .map(|_| Fr::rand(rng))
+        .collect::<Vec<_>>();
     mappings.iter().for_each(|(k, v)| {
         right_witness_values[*v] = left_witness_values[*k];
     });
@@ -39,13 +45,16 @@ fn generate_inputs(num_tx: usize, pow_seg: usize, pow_shared: usize) -> (
 }
 
 const NUM_ITER: usize = 5;
-const SHARED_POW_VEC: [usize; 8] = [9, 10, 11, 12, 13, 14, 15, 16];
+const SHARED_POW_RANGE: Range<usize> = 1..16;
 const NUM_TX: usize = 1024;
 const POW_SEG: usize = 6;
 
 fn main() {
-    for &pow_shared in SHARED_POW_VEC.iter() {
-        println!("Num TX: {}, Pow Seg: {}, Pow Shared: {}", NUM_TX, POW_SEG, pow_shared);
+    for pow_shared in SHARED_POW_RANGE {
+        println!(
+            "Num TX: {}, Log Seg: {}, Log Shared: {}",
+            NUM_TX, POW_SEG, pow_shared
+        );
         let (pp, witness, statement) = generate_inputs(NUM_TX, POW_SEG, pow_shared);
         for _ in 0..NUM_ITER {
             let curr_time = std::time::Instant::now();

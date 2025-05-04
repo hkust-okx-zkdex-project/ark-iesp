@@ -1,9 +1,12 @@
-use crate::domain::{create_domain_with_generator, roots_of_unity, vanishing_poly_commitment_affine};
+use crate::domain::{
+    create_domain_with_generator, roots_of_unity, vanishing_poly_commitment_affine,
+};
 use crate::error::Error;
 use crate::kzg::{unsafe_setup_from_tau, Kzg};
 use crate::COMPRESS_MOD;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
+use ark_ff::FftField;
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain, Radix2EvaluationDomain};
 use ark_serialize::CanonicalSerialize;
@@ -12,7 +15,6 @@ use ark_std::{One, UniformRand, Zero};
 use blake2::{Blake2b512, Digest};
 use std::cmp::max;
 use std::collections::BTreeMap;
-use ark_ff::FftField;
 
 #[derive(Debug)]
 pub struct PublicParameters<P: Pairing> {
@@ -62,8 +64,6 @@ pub struct PublicParametersBuilder<P: Pairing> {
     tau: Option<P::ScalarField>,
     domain_generator_l: Option<P::ScalarField>,
     domain_generator_r: Option<P::ScalarField>,
-    positions_left: Option<Vec<usize>>,
-    positions_right: Option<Vec<usize>>,
     position_mappings: Option<BTreeMap<usize, usize>>,
 }
 
@@ -75,8 +75,6 @@ impl<P: Pairing> PublicParametersBuilder<P> {
             tau: None,
             domain_generator_l: None,
             domain_generator_r: None,
-            positions_left: None,
-            positions_right: None,
             position_mappings: None,
         }
     }
@@ -106,27 +104,21 @@ impl<P: Pairing> PublicParametersBuilder<P> {
         self
     }
 
-    pub fn positions_left(mut self, indices: &[usize]) -> Self {
-        self.positions_left = Some(indices.to_vec());
-        self
-    }
-
-    pub fn positions_right(mut self, indices: &[usize]) -> Self {
-        self.positions_right = Some(indices.to_vec());
-        self
-    }
-
     pub fn position_mappings(mut self, mappings: &BTreeMap<usize, usize>) -> Self {
         self.position_mappings = Some(mappings.clone());
         self
     }
 
     pub fn build<R: Rng + ?Sized>(self, rng: &mut R) -> Result<PublicParameters<P>, Error> {
-        let size_left_values = self.size_left_values.ok_or(Error::MissingParameter("Left \
-        Element Size"))?;
+        let size_left_values = self.size_left_values.ok_or(Error::MissingParameter(
+            "Left \
+        Element Size",
+        ))?;
         validate_input(size_left_values, None)?;
-        let size_right_values = self.size_right_values.ok_or(Error::MissingParameter("Right \
-        Element Size"))?;
+        let size_right_values = self.size_right_values.ok_or(Error::MissingParameter(
+            "Right \
+        Element Size",
+        ))?;
         validate_input(size_right_values, None)?;
         let pow_of_tau_g1 = max(size_left_values, size_right_values);
 
@@ -144,9 +136,13 @@ impl<P: Pairing> PublicParametersBuilder<P> {
             &g2_affine_srs,
         )?;
 
-        let positions_left = self.positions_left.ok_or(Error::LeftIndicesCannotBeNone)?;
-        let positions_right = self.positions_right.ok_or(Error::RightIndicesCannotBeNone)?;
-        let position_mappings = self.position_mappings.ok_or(Error::IndexMappingCannotBeNone)?;
+        let position_mappings = self
+            .position_mappings
+            .ok_or(Error::IndexMappingCannotBeNone)?;
+        let (positions_left, positions_right): (Vec<_>, Vec<_>) = position_mappings
+            .iter()
+            .map(|(&key, &value)| (key, value))
+            .unzip();
 
         let fr_zero = P::ScalarField::zero();
         let fr_one = P::ScalarField::one();
@@ -156,8 +152,8 @@ impl<P: Pairing> PublicParametersBuilder<P> {
         });
         let coeff_positions_left = domain_l.ifft(&poly_eval_positions_left);
         let poly_positions_left = DensePolynomial::from_coefficients_vec(coeff_positions_left);
-        let g2_affine_positions_left = Kzg::<P::G2>::commit(&g2_affine_srs, &poly_positions_left)
-            .into_affine();
+        let g2_affine_positions_left =
+            Kzg::<P::G2>::commit(&g2_affine_srs, &poly_positions_left).into_affine();
 
         let mut poly_eval_positions_right = vec![fr_zero; size_right_values];
         positions_right.iter().for_each(|&i| {
@@ -165,11 +161,10 @@ impl<P: Pairing> PublicParametersBuilder<P> {
         });
         let coeff_positions_right = domain_r.ifft(&poly_eval_positions_right);
         let poly_positions_right = DensePolynomial::from_coefficients_vec(coeff_positions_right);
-        let g2_affine_positions_right = Kzg::<P::G2>::commit(&g2_affine_srs,
-                                                             &poly_positions_right).into_affine();
+        let g2_affine_positions_right =
+            Kzg::<P::G2>::commit(&g2_affine_srs, &poly_positions_right).into_affine();
 
-        let mut poly_eval_position_mappings: Vec<P::ScalarField> = vec![fr_zero;
-                                                                        size_left_values];
+        let mut poly_eval_position_mappings: Vec<P::ScalarField> = vec![fr_zero; size_left_values];
         let roots_of_unity_r = roots_of_unity::<P>(&domain_r);
         let mut fr_position_mappings = BTreeMap::new();
         position_mappings.iter().for_each(|(&key, &value)| {
@@ -179,94 +174,125 @@ impl<P: Pairing> PublicParametersBuilder<P> {
         });
         domain_l.ifft_in_place(&mut poly_eval_position_mappings);
         let coeff_position_mappings = poly_eval_position_mappings;
-        let poly_position_mappings = DensePolynomial::from_coefficients_vec(coeff_position_mappings);
-        let g1_affine_position_mappings = Kzg::<P::G1>::commit(&g1_affine_srs,
-                                                               &poly_position_mappings).into_affine();
+        let poly_position_mappings =
+            DensePolynomial::from_coefficients_vec(coeff_position_mappings);
+        let g1_affine_position_mappings =
+            Kzg::<P::G1>::commit(&g1_affine_srs, &poly_position_mappings).into_affine();
 
-        let domain_coset_l = domain_l.get_coset(P::ScalarField::GENERATOR)
+        let domain_coset_l = domain_l
+            .get_coset(P::ScalarField::GENERATOR)
             .ok_or(Error::FailedToCreateCosetOfEvaluationDomain)?;
-        let domain_coset_r = domain_r.get_coset(P::ScalarField::GENERATOR)
+        let domain_coset_r = domain_r
+            .get_coset(P::ScalarField::GENERATOR)
             .ok_or(Error::FailedToCreateCosetOfEvaluationDomain)?;
         let coset_eval_list_positions_left = domain_coset_l.fft(&poly_positions_left);
         let coset_eval_list_positions_right = domain_coset_r.fft(&poly_positions_right);
         let coset_eval_list_position_mappings = domain_coset_l.fft(&poly_position_mappings);
         let roots_of_unity_coset_r = roots_of_unity::<P>(&domain_coset_r);
 
-
         // Construct Hash Representation.
         let mut blake2b_hasher = Blake2b512::new();
         let mut buf = Vec::new();
         serialize_usize(size_left_values, &mut buf);
         serialize_usize(size_right_values, &mut buf);
-        g2_affine_zl.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
-        g2_affine_zr.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
-        g2_affine_positions_left.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
-        g2_affine_positions_right.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
-        g1_affine_position_mappings.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
-        domain_l.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
-        domain_r.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
-        domain_coset_l.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
-        domain_coset_r.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
+        g2_affine_zl
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        g2_affine_zr
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        g2_affine_positions_left
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        g2_affine_positions_right
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        g1_affine_position_mappings
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        domain_l
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        domain_r
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        domain_coset_l
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        domain_coset_r
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        g1_affine_srs.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
+        g1_affine_srs
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        g2_affine_srs.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_| Error::FailedToSerializeElement)?;
+        g2_affine_srs
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        positions_left.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        positions_left
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        positions_right.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        positions_right
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
 
-        poly_positions_left.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
-        blake2b_hasher.update(&buf);
-        buf.clear();
-
-        poly_positions_right.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        poly_positions_left
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        position_mappings.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        poly_positions_right
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        poly_position_mappings.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        position_mappings
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        coset_eval_list_positions_left.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        poly_position_mappings
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        coset_eval_list_positions_right.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        coset_eval_list_positions_left
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        coset_eval_list_position_mappings.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        coset_eval_list_positions_right
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
         buf.clear();
 
-        roots_of_unity_coset_r.serialize_with_mode(&mut buf, COMPRESS_MOD).map_err(|_|
-            Error::FailedToSerializeElement)?;
+        coset_eval_list_position_mappings
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
+        blake2b_hasher.update(&buf);
+        buf.clear();
+
+        roots_of_unity_coset_r
+            .serialize_with_mode(&mut buf, COMPRESS_MOD)
+            .map_err(|_| Error::FailedToSerializeElement)?;
         blake2b_hasher.update(&buf);
 
         let hash_representation = blake2b_hasher.finalize().to_vec();
@@ -317,16 +343,16 @@ fn create_domain_and_g2_affine_vanishing_poly<P: Pairing>(
     domain_size: usize,
     g2_affine_srs: &[P::G2Affine],
 ) -> Result<(Radix2EvaluationDomain<P::ScalarField>, P::G2Affine), Error> {
-    let domain = domain_generator
-        .map_or_else(
-            || Radix2EvaluationDomain::<P::ScalarField>::new(domain_size).ok_or(Error::FailedToCreateEvaluationDomain),
-            |generator| create_domain_with_generator::<P::ScalarField>(generator, domain_size),
-        )?;
+    let domain = domain_generator.map_or_else(
+        || {
+            Radix2EvaluationDomain::<P::ScalarField>::new(domain_size)
+                .ok_or(Error::FailedToCreateEvaluationDomain)
+        },
+        |generator| create_domain_with_generator::<P::ScalarField>(generator, domain_size),
+    )?;
 
-    let g2_affine_vanishing_poly = vanishing_poly_commitment_affine::<P::G2>(
-        g2_affine_srs,
-        &domain,
-    );
+    let g2_affine_vanishing_poly =
+        vanishing_poly_commitment_affine::<P::G2>(g2_affine_srs, &domain);
 
     Ok((domain, g2_affine_vanishing_poly))
 }

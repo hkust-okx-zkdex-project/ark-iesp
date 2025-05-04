@@ -6,8 +6,6 @@ pub enum Error {
     InputIsTooLarge(usize),
     FailedToCreateEvaluationDomain,
     FailedToInverseFieldElement,
-    LeftIndicesCannotBeNone,
-    RightIndicesCannotBeNone,
     IndexMappingCannotBeNone,
     WrongNumberOfLeftValues(usize),
     WrongNumberOfRightValues(usize),
