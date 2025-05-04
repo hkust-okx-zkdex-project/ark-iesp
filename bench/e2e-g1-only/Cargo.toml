@@ -8,3 +8,4 @@ ark-std = { version = "0.5.0", features = ["parallel"] }
 ark-bn254 = "0.5.0"
 ark-isep = { git = "https://github.com/txaty/ark-isep.git", branch = "main" }
 log = "0.4.27"
+env_logger = "0.11.8"

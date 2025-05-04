@@ -50,6 +50,7 @@ const NUM_TX: usize = 1024;
 const POW_SEG: usize = 6;
 
 fn main() {
+    env_logger::init();
     for pow_shared in SHARED_POW_RANGE {
         log::info!(
             "Num TX: {}, Log Seg: {}, Log Shared: {}",
