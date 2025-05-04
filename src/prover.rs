@@ -1,3 +1,5 @@
+use std::time;
+use std::time::Instant;
 use crate::domain::{divide_by_vanishing_poly_on_coset_in_place, roots_of_unity};
 use crate::error::Error;
 use crate::kzg::Kzg;
@@ -28,6 +30,7 @@ pub fn prove<P: Pairing>(
     witness: &Witness<P>,
     statement: &Statement<P>,
 ) -> Result<Proof<P>, Error> {
+    let mut fft_ifft_acc = time::Duration::ZERO;
     let mut transcript = Transcript::<P::ScalarField>::new();
     transcript.append_elements(&[
         (Label::PublicParameters, pp.hash_representation.clone()),
@@ -53,13 +56,17 @@ pub fn prove<P: Pairing>(
     non_zero_eval_list.iter().for_each(|(i, eval)| {
         poly_eval_l[*i] = *eval;
     });
+    let start = Instant::now();
     let poly_coeff_l = pp.domain_l.ifft(&poly_eval_l);
+    fft_ifft_acc += start.elapsed();
     let poly_l = DensePolynomial::from_coefficients_vec(poly_coeff_l);
     let g2_affine_l = Kzg::<P::G2>::commit(&pp.g2_affine_srs, &poly_l).into_affine();
 
     // Construct the quotient polynomial of the left half.
+    let start = Instant::now();
     let coset_eval_list_l = pp.domain_coset_l.fft(&poly_l);
     let coset_eval_list_left_values = pp.domain_coset_l.fft(&witness.poly_left_values);
+    fft_ifft_acc += start.elapsed();
     let mut coset_eval_list_ql: Vec<P::ScalarField> = coset_eval_list_l
         .par_iter()
         .zip(coset_eval_list_left_values.par_iter())
@@ -67,7 +74,9 @@ pub fn prove<P: Pairing>(
         .zip(pp.coset_eval_list_position_mappings.par_iter())
         .map(|(((&l, &v), &p), &m)| l * (beta + v + gamma * m) - p)
         .collect();
+    let start = Instant::now();
     pp.domain_coset_l.ifft_in_place(&mut coset_eval_list_ql);
+    fft_ifft_acc += start.elapsed();
     let mut poly_coset_coeff_list_ql = coset_eval_list_ql;
     divide_by_vanishing_poly_on_coset_in_place::<P::G1>(&pp.domain_l, &mut
         poly_coset_coeff_list_ql)?;
@@ -88,13 +97,17 @@ pub fn prove<P: Pairing>(
     non_zero_eval_list.iter().for_each(|(i, eval)| {
         poly_eval_r[*i] = *eval;
     });
+    let start = Instant::now();
     let poly_coeff_r = pp.domain_r.ifft(&poly_eval_r);
+    fft_ifft_acc += start.elapsed();
     let poly_r = DensePolynomial::from_coefficients_vec(poly_coeff_r);
     let g2_affine_r = Kzg::<P::G2>::commit(&pp.g2_affine_srs, &poly_r).into_affine();
 
     // Construct the quotient polynomial of the right half.
+    let start = Instant::now();
     let coset_eval_list_r = pp.domain_coset_r.fft(&poly_r);
     let coset_eval_list_right_values = pp.domain_coset_r.fft(&witness.poly_right_values);
+    fft_ifft_acc += start.elapsed();
     let mut coset_eval_list_qr: Vec<P::ScalarField> = coset_eval_list_r
         .par_iter()
         .zip(coset_eval_list_right_values.par_iter())
@@ -102,7 +115,9 @@ pub fn prove<P: Pairing>(
         .zip(pp.roots_of_unity_coset_r.par_iter())
         .map(|(((&r, &e), &p), &c)| r * (beta + e + gamma * c) - p)
         .collect();
+    let start = Instant::now();
     pp.domain_coset_r.ifft_in_place(&mut coset_eval_list_qr);
+    fft_ifft_acc += start.elapsed();
     let mut poly_coset_coeff_list_qr = coset_eval_list_qr;
     divide_by_vanishing_poly_on_coset_in_place::<P::G1>(&pp.domain_r, &mut poly_coset_coeff_list_qr)?;
     let coeff_qr = poly_coset_coeff_list_qr;
@@ -138,6 +153,8 @@ pub fn prove<P: Pairing>(
     let mut poly_batched = poly_l + &poly_r * delta;
     poly_batched.coeffs.drain(0..1);
     let batch_proof = Kzg::<P::G2>::commit(&pp.g2_affine_srs, &poly_batched).into_affine();
+    
+    log::info!("FFT/ifft time: {:?}", fft_ifft_acc);
 
     Ok(Proof {
         g2_affine_l,

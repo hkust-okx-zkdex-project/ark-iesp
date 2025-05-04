@@ -27,7 +27,7 @@ fn generate_inputs(
         .position_mappings(&mappings)
         .build(rng)
         .unwrap();
-    println!("setup time: {:?} ms", curr_time.elapsed().as_millis());
+    log::info!("setup time: {:?} ms", curr_time.elapsed().as_millis());
 
     let left_witness_values = (0..num_left_values)
         .map(|_| Fr::rand(rng))
@@ -52,18 +52,20 @@ const POW_SEG: usize = 6;
 
 fn main() {
     for &pow_shared in SHARED_POW_VEC.iter() {
-        println!(
+        log::info!(
             "Num TX: {}, Pow Seg: {}, Pow Shared: {}",
-            NUM_TX, POW_SEG, pow_shared
+            NUM_TX,
+            POW_SEG,
+            pow_shared
         );
         let (pp, witness, statement) = generate_inputs(NUM_TX, POW_SEG, pow_shared);
         for _ in 0..NUM_ITER {
             let curr_time = std::time::Instant::now();
             let proof = prove(&pp, &witness, &statement).unwrap();
-            println!("prove time: {:?} ms", curr_time.elapsed().as_millis());
+            log::info!("prove time: {:?} ms", curr_time.elapsed().as_millis());
             let curr_time = std::time::Instant::now();
             verify(&pp, &statement, &proof).unwrap();
-            println!("verify time: {:?} ms", curr_time.elapsed().as_millis());
+            log::info!("verify time: {:?} ms", curr_time.elapsed().as_millis());
         }
     }
 }
