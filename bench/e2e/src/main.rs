@@ -45,18 +45,20 @@ fn generate_inputs(
 }
 
 const NUM_ITER: usize = 5;
-const SHARED_POW_RANGE: Range<usize> = 1..16;
+const SHARED_POW_RANGE: Range<usize> = 0..15;
 const NUM_TX: usize = 1024;
 const POW_SEG: usize = 6;
 
 fn main() {
     env_logger::init();
     for pow_shared in SHARED_POW_RANGE {
+        let poly_degree_shared_exp = 10 + pow_shared;
         log::info!(
-            "Num TX: {}, Log Seg: {}, Log Shared: {}",
+            "Num TX: {}, Log Seg: {}, Log Shared: {}, Poly Degree (to be Linked): 2^{} - 1, Poly Degree (Fixed): 2^16 - 1",
             NUM_TX,
             POW_SEG,
-            pow_shared
+            pow_shared,
+            poly_degree_shared_exp
         );
         let (pp, witness, statement) = generate_inputs(NUM_TX, POW_SEG, pow_shared);
         for _ in 0..NUM_ITER {
